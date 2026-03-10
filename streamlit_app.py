@@ -11,7 +11,8 @@ DATA_FILE = "expenses.csv"
 def load_data():
     if os.path.exists(DATA_FILE):
         df = pd.read_csv(DATA_FILE)
-        df['Date'] = pd.to_datetime(df['Date']).dt.date
+        # Convert to datetime objects for internal logic
+        df['Date'] = pd.to_datetime(df['Date'])
         return df
     else:
         return pd.DataFrame(columns=["Date", "Amount", "Description", "Spent By"])
@@ -30,7 +31,7 @@ with st.form("expense_form", clear_on_submit=True):
 if submitted:
     if amount > 0 and description:
         new_data = pd.DataFrame({
-            "Date": [expense_date],
+            "Date": [pd.to_datetime(expense_date)],
             "Amount": [amount],
             "Description": [description],
             "Spent By": [spent_by]
@@ -39,14 +40,14 @@ if submitted:
         df = load_data()
         df = pd.concat([df, new_data], ignore_index=True)
         df.to_csv(DATA_FILE, index=False)
-        st.success(f"Recorded ₹{amount} for {spent_by} on {expense_date}!")
+        st.success(f"Recorded ₹{amount} for {spent_by}!")
 
 # --- DISPLAY & FILTERS ---
 st.divider()
 df_display = load_data()
 
 if not df_display.empty:
-    df_display['Date'] = pd.to_datetime(df_display['Date'])
+    # Month-wise Filter Logic
     months = df_display['Date'].dt.strftime('%B %Y').unique().tolist()
     selected_month = st.selectbox("Filter by Month", options=["All"] + months)
     
@@ -55,6 +56,12 @@ if not df_display.empty:
         filtered_df = df_display[df_display['Date'].dt.strftime('%B %Y') == selected_month]
 
     filtered_df = filtered_df.sort_values(by="Date", ascending=False)
+    
+    # --- DATE FORMATTING FIX ---
+    # Convert to DD/MM/YYYY string to remove time and match your request
+    filtered_df['Date'] = filtered_df['Date'].dt.strftime('%d/%m/%Y')
+    
+    # Add Sr.No.
     filtered_df.insert(0, 'Sr.No.', range(1, len(filtered_df) + 1))
     
     totals = filtered_df.groupby("Spent By")["Amount"].sum()
@@ -62,7 +69,6 @@ if not df_display.empty:
     col1.metric("Ajinkya Total", f"₹{totals.get('Ajinkya', 0):.2f}")
     col2.metric("Komal Total", f"₹{totals.get('Komal', 0):.2f}")
     
-    # NEW: Download Button Feature
     csv = filtered_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Download Report as CSV",
