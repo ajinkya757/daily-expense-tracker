@@ -1,86 +1,62 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
-import os
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Expense Tracker", layout="centered")
+st.set_page_config(page_title="Permanent Expense Tracker", layout="centered")
 
-DATA_FILE = "expenses.csv"
+# Establish Connection to Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        df = pd.read_csv(DATA_FILE)
-        # Convert to datetime for sorting/filtering
-        df['Date'] = pd.to_datetime(df['Date'])
-        return df
-    else:
-        return pd.DataFrame(columns=["Date", "Amount", "Description", "Spent By"])
+    # Reads the sheet and handles caching for performance
+    return conn.read(ttl="0") 
 
-# --- UI ELEMENTS ---
-st.title("💰 Daily Expense Logger")
+st.title("💰 Permanent Expense Logger")
 
-with st.form("expense_form", clear_on_submit=True):
-    expense_date = st.date_input("Date of Expense", value=datetime.now().date())
-    amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%.2f")
-    description = st.text_input("What was this for?")
-    spent_by = st.radio("Who spent this?", options=["Ajinkya", "Komal"], horizontal=True)
-    
-    submitted = st.form_submit_button("Record Expense")
+tab1, tab2 = st.tabs(["📝 Add Expense", "🔍 View History"])
 
-if submitted:
-    if amount > 0 and description:
-        # Save as a standard ISO string for database consistency
-        new_data = pd.DataFrame({
-            "Date": [pd.to_datetime(expense_date)],
+with tab1:
+    with st.form("expense_form", clear_on_submit=True):
+        expense_date = st.date_input("Date", value=datetime.now().date())
+        amount = st.number_input("Amount", min_value=0.0, step=1.0)
+        description = st.text_input("Description")
+        spent_by = st.radio("Who spent this?", options=["Ajinkya", "Komal"], horizontal=True)
+        submitted = st.form_submit_button("Save to Google Sheets")
+
+    if submitted and amount > 0 and description:
+        # Create new record
+        new_row = pd.DataFrame({
+            "Date": [expense_date.strftime('%d/%m/%Y')],
             "Amount": [amount],
             "Description": [description],
             "Spent By": [spent_by]
         })
         
-        df = load_data()
-        df = pd.concat([df, new_data], ignore_index=True)
-        df.to_csv(DATA_FILE, index=False)
-        st.success(f"Recorded ₹{amount} for {spent_by}!")
+        # Load existing, add new, and update Google Sheet
+        existing_data = load_data()
+        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+        conn.update(data=updated_df)
+        st.success("Data saved permanently to Google Sheets!")
 
-# --- DISPLAY & FILTERS ---
-st.divider()
-df_display = load_data()
-
-if not df_display.empty:
-    # Month Filter Logic
-    months = df_display['Date'].dt.strftime('%B %Y').unique().tolist()
-    selected_month = st.selectbox("Filter by Month", options=["All"] + months)
-    
-    filtered_df = df_display.copy()
-    if selected_month != "All":
-        filtered_df = df_display[df_display['Date'].dt.strftime('%B %Y') == selected_month]
-
-    # Sort and Format Date
-    filtered_df = filtered_df.sort_values(by="Date", ascending=False)
-    
-    # REQUIREMENT: Remove timestamp and use DD/MM/YYYY format
-    filtered_df['Date'] = filtered_df['Date'].dt.strftime('%d/%m/%Y')
-    
-    # Add Sr.No.
-    filtered_df.insert(0, 'Sr.No.', range(1, len(filtered_df) + 1))
-    
-    # Totals
-    totals = filtered_df.groupby("Spent By")["Amount"].sum()
-    col1, col2 = st.columns(2)
-    col1.metric("Ajinkya Total", f"₹{totals.get('Ajinkya', 0):.2f}")
-    col2.metric("Komal Total", f"₹{totals.get('Komal', 0):.2f}")
-    
-    # Download Button
-    csv = filtered_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Report as CSV",
-        data=csv,
-        file_name=f"Expenses_{selected_month}.csv",
-        mime='text/csv',
-    )
-    
-    st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-else:
-    st.info("No expenses recorded yet.")
- 
+with tab2:
+    df = load_data()
+    if not df.empty:
+        # Month Filter
+        df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y')
+        months = df['Date'].dt.strftime('%B %Y').unique().tolist()
+        sel_month = st.selectbox("Filter Month", options=["All"] + months)
+        
+        disp_df = df.copy()
+        if sel_month != "All":
+            disp_df = df[df['Date'].dt.strftime('%B %Y') == sel_month]
+        
+        # Format for display
+        disp_df = disp_df.sort_values(by="Date", ascending=False)
+        disp_df['Date'] = disp_df['Date'].dt.strftime('%d/%m/%Y')
+        disp_df.insert(0, 'Sr.No.', range(1, len(disp_df) + 1))
+        
+        st.dataframe(disp_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No data found in Google Sheets.")
